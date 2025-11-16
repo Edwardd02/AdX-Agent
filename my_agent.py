@@ -20,7 +20,7 @@ ATOMIC_SEGMENT_COUNTS = {
 
 
 def expected_daily_users(target_segment: MarketSegment) -> int:
-    # sum any atomic group that fits the segment (e.g. "Male","Young")
+    # sum any atomic group that fits the segment
     tset = set(target_segment)
     total = 0
     for atomic, cnt in ATOMIC_SEGMENT_COUNTS.items():
