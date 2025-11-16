@@ -39,27 +39,24 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
     def get_ad_bids(self) -> Set[BidBundle]:
         bundles = set()
-        today = self.get_current_day()
 
         for camp in self.get_active_campaigns():
-            R = camp.reach
+            reach = camp.reach
             done = self.get_cumulative_reach(camp)
             spent = self.get_cumulative_cost(camp)
 
-            remaining = max(R - done, 0)
+            remaining = max(reach - done, 0)
             remaining_budget = max((camp.budget or 0) - spent, 0)
 
             # skip finished or broke campaigns
             if remaining <= 0 or remaining_budget <= 0:
                 continue
 
-            days_left = max(1, camp.end_day - today + 1)
-
             # spend a steady portion each day
             daily_budget = max(1.0, remaining_budget * 0.35)
 
             # urgency goes up when we are behind
-            urgency = 1 - (remaining / R)
+            urgency = 1 - (remaining / reach)
             bid_per_item = 0.3 + 0.7 * urgency
 
             # only bid on the exact segment
@@ -85,26 +82,26 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         quality = max(self.get_quality_score(), 0.05)
 
         for camp in campaigns_for_auction:
-            R = camp.reach
+            reach = camp.reach
             duration = max(1, camp.end_day - camp.start_day + 1)
 
-            # estimate how many users we can expect
+            # # estimate how many users we can expect
             daily_supply = expected_daily_users(camp.target_segment)
             expected_total = daily_supply * duration
-
-            # avoid campaigns that look too large
-            if R > expected_total * 1.5:
-                bids[camp] = self.clip_campaign_bid(camp, max(0.1, 0.02 * R))
-                continue
+            #
+            # # avoid campaigns that look too large
+            # if reach > expected_total * 1.5:
+            #     bids[camp] = self.clip_campaign_bid(camp, max(0.1, 0.02 * reach))
+            #     continue
 
             # how tight the campaign is
-            difficulty = min(1.0, R / max(1.0, expected_total))
+            difficulty = min(1.0, reach / max(1.0, expected_total))
 
             # prefer small campaigns
-            size_boost = 1.2 if R <= 300 else 1.0
+            size_boost = 1.2 if reach <= 300 else 1.0
 
             # use the budget if available
-            value_anchor = camp.budget if (camp.budget and camp.budget > 0) else R
+            value_anchor = camp.budget if (camp.budget and camp.budget > 0) else reach
 
             # simple rule: bid a portion of the value,
             # increase it a bit when the campaign is tight
