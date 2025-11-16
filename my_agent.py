@@ -1,34 +1,38 @@
-from typing import Set, Dict
-from math import exp
-from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
 from agt_server.agents.test_agents.adx.tier1.my_agent import Tier1NDaysNCampaignsAgent
 from agt_server.local_games.adx_arena import AdXGameSimulator
+from typing import Set, Dict
+from math import ceil
 from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
+from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
 
 
-# A simple estimation of segment popularity (used only for rough filtering)
-EST_SEG_SIZE = {
-    ("Female", "Old", "LowIncome"): 2400,
-    ("Male", "Young", "LowIncome"): 1800,
-    ("Female", "Young", "LowIncome"): 1950,
-    ("Male", "Old", "LowIncome"): 1750,
-    ("Male", "Old", "HighIncome"): 800,
-    ("Male", "Young", "HighIncome"): 500,
-    ("Female", "Old", "HighIncome"): 400,
-    ("Female", "Young", "HighIncome"): 250,
+# counts for each detailed group
+ATOMIC_SEGMENT_COUNTS = {
+    ("Male", "Young", "LowIncome"): 1836,
+    ("Male", "Young", "HighIncome"): 517,
+    ("Male", "Old", "LowIncome"): 1795,
+    ("Male", "Old", "HighIncome"): 808,
+    ("Female", "Young", "LowIncome"): 1980,
+    ("Female", "Young", "HighIncome"): 256,
+    ("Female", "Old", "LowIncome"): 2401,
+    ("Female", "Old", "HighIncome"): 407,
 }
 
 
-def estimate_size(segment: MarketSegment) -> int:
-    key = tuple(sorted(segment))
-    return EST_SEG_SIZE.get(key, 1500)
+def expected_daily_users(target_segment: MarketSegment) -> int:
+    # sum any atomic group that fits the segment (e.g. "Male","Young")
+    tset = set(target_segment)
+    total = 0
+    for atomic, cnt in ATOMIC_SEGMENT_COUNTS.items():
+        if tset.issubset(set(atomic)):
+            total += cnt
+    return total
 
 
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
-
     def __init__(self):
         super().__init__()
-        self.name = "A very long Agent name"
+        self.name = "HTandRX's Agent"
 
     def on_new_game(self):
         pass
@@ -38,86 +42,81 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         today = self.get_current_day()
 
         for camp in self.get_active_campaigns():
-
-            reach = camp.reach # total required
+            R = camp.reach
             done = self.get_cumulative_reach(camp)
             spent = self.get_cumulative_cost(camp)
-            remaining = max(reach - done, 0)
 
-            days_left = camp.end_day - today + 1
-            if days_left <= 0 or remaining <= 0:
+            remaining = max(R - done, 0)
+            remaining_budget = max((camp.budget or 0) - spent, 0)
+
+            # skip finished or broke campaigns
+            if remaining <= 0 or remaining_budget <= 0:
                 continue
 
-            # Check if the campaign is realistic to finish
-            seg_size = estimate_size(camp.target_segment)
-            expected_supply = seg_size * days_left
+            days_left = max(1, camp.end_day - today + 1)
 
-            # If impossible to finish → skip bidding
-            if expected_supply < remaining:
-                continue
+            # spend a steady portion each day
+            daily_budget = max(1.0, remaining_budget * 0.35)
 
-            remaining_budget = max(camp.budget - spent, 0)
-            daily_limit = remaining_budget / days_left
+            # urgency goes up when we are behind
+            urgency = 1 - (remaining / R)
+            bid_per_item = 0.3 + 0.7 * urgency
 
-            # Simple safe bid per impression
-            # This helps avoid overpaying
-            base_bid = remaining_budget / remaining
-            bid_per_item = max(0.1, base_bid)
-
-            # Build bids only on correct segments
-            segment_bids = set()
-            for seg in MarketSegment.all_segments():
-                if seg.issubset(camp.target_segment):
-                    segment_bids.add(
-                        Bid(
-                            bidder=self,
-                            auction_item=seg,
-                            bid_per_item=bid_per_item,
-                            bid_limit=daily_limit
-                        )
-                    )
+            # only bid on the exact segment
+            bid = Bid(
+                bidder=self,
+                auction_item=camp.target_segment,
+                bid_per_item=bid_per_item,
+                bid_limit=daily_budget
+            )
 
             bundle = BidBundle(
                 campaign_id=camp.uid,
-                limit=daily_limit,
-                bid_entries=segment_bids
+                limit=daily_budget,
+                bid_entries={bid}
             )
+
             bundles.add(bundle)
 
         return bundles
 
     def get_campaign_bids(self, campaigns_for_auction: Set[Campaign]) -> Dict[Campaign, float]:
         bids = {}
-        quality = self.get_quality_score()
+        quality = max(self.get_quality_score(), 0.05)
 
         for camp in campaigns_for_auction:
-
             R = camp.reach
-            duration = camp.end_day - camp.start_day + 1
-            seg_size = estimate_size(camp.target_segment)
+            duration = max(1, camp.end_day - camp.start_day + 1)
 
-            # Check if the campaign is reasonable to win
-            expected_supply = seg_size * duration
+            # estimate how many users we can expect
+            daily_supply = expected_daily_users(camp.target_segment)
+            expected_total = daily_supply * duration
 
-            # If reach is too high for that segment → avoid
-            if expected_supply < R:
-                bids[camp] = self.clip_campaign_bid(camp, R * 0.9)
+            # avoid campaigns that look too large
+            if R > expected_total * 1.5:
+                bids[camp] = self.clip_campaign_bid(camp, max(0.1, 0.02 * R))
                 continue
 
-            # Base bid = conservative fraction of reach
-            base_bid = 0.3 * R
+            # how tight the campaign is
+            difficulty = min(1.0, R / max(1.0, expected_total))
 
-            # Longer duration → safer → small decrease
-            base_bid = base_bid * (1 - (duration - 1) * 0.05)
+            # prefer small campaigns
+            size_boost = 1.2 if R <= 300 else 1.0
 
-            # Adjust with quality (small adjustment)
-            base_bid *= (1 + 0.1 * (quality - 1))
+            # use the budget if available
+            value_anchor = camp.budget if (camp.budget and camp.budget > 0) else R
 
-            bid = self.clip_campaign_bid(camp, base_bid)
-            bids[camp] = bid
+            # simple rule: bid a portion of the value,
+            # increase it a bit when the campaign is tight
+            raw_bid = value_anchor * (1.0 - 0.4 * (1 - difficulty)) * size_boost
+
+            # adjust using quality so that effective bid stays reasonable
+            adjusted = raw_bid / quality
+
+            # keep it safe
+            bids[camp] = self.clip_campaign_bid(camp, adjusted)
 
         return bids
-
 
 
 if __name__ == "__main__":
@@ -126,4 +125,4 @@ if __name__ == "__main__":
     ]
 
     simulator = AdXGameSimulator()
-    simulator.run_simulation(agents=test_agents, num_simulations=500)
+    simulator.run_simulation(agents=test_agents, num_simulations=50)
