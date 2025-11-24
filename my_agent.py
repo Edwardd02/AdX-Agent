@@ -100,7 +100,8 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             # estimate how many users we can expect
             daily_supply = expected_daily_users(camp.target_segment)
             expected_total = daily_supply * duration
-
+            # Logics
+            ##################################################################################################
             # avoid campaigns that look too large
             if reach > expected_total * 1.5:
                 bids[camp] = self.clip_campaign_bid(camp, max(0.1, 0.02 * reach))
