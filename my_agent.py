@@ -6,7 +6,7 @@ from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, Mar
 from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
 
 
-# counts for each detailed group
+# Market Share Dictionary
 ATOMIC_SEGMENT_COUNTS = {
     ("Male", "Young", "LowIncome"): 1836,
     ("Male", "Young", "HighIncome"): 517,
@@ -20,7 +20,7 @@ ATOMIC_SEGMENT_COUNTS = {
 
 
 def expected_daily_users(target_segment: MarketSegment) -> int:
-    # sum any atomic group that fits the segment
+    # Sum any atomic group that fits the segment, this returns an estimate of daily users on target_segment
     tset = set(target_segment)
     total = 0
     for atomic, cnt in ATOMIC_SEGMENT_COUNTS.items():
@@ -38,16 +38,24 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         pass
 
     def get_ad_bids(self) -> Set[BidBundle]:
+        # initialize empty set of bid bundles
         bundles = set()
-
+        # iterate through active campaigns
         for camp in self.get_active_campaigns():
-            reach = camp.reach
-            done = self.get_cumulative_reach(camp)
-            spent = self.get_cumulative_cost(camp)
-
-            remaining = max(reach - done, 0)
-            remaining_budget = max((camp.budget or 0) - spent, 0)
-
+            # Initializations
+            ##################################################################################################
+            # compute remaining reach and budget
+            # data structure: {"reach": int, "done": int, "spent": float, "remaining": int, "remaining_budget": float}
+            reach = camp.reach # (total target)
+            budget = camp.budget # (total budget)
+            done = self.get_cumulative_reach(camp) # (so far achieved)
+            spent = self.get_cumulative_cost(camp) # (so far spent)
+            # remaining target and budget
+            # data structure: {"remaining": int, "remaining_budget": float}
+            remaining = max(reach - done, 0) # (still need)
+            remaining_budget = max(budget - spent, 0) # (still have)
+            # Logics
+            ##################################################################################################
             # skip finished or broke campaigns
             if remaining <= 0 or remaining_budget <= 0:
                 continue
@@ -78,21 +86,25 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         return bundles
 
     def get_campaign_bids(self, campaigns_for_auction: Set[Campaign]) -> Dict[Campaign, float]:
+        # Initializations
+        ##################################################################################################
         bids = {}
-        quality = max(self.get_quality_score(), 0.05)
+
+        quality = self.get_quality_score()
 
         for camp in campaigns_for_auction:
             reach = camp.reach
+            # duration of the campaign
             duration = max(1, camp.end_day - camp.start_day + 1)
 
-            # # estimate how many users we can expect
+            # estimate how many users we can expect
             daily_supply = expected_daily_users(camp.target_segment)
             expected_total = daily_supply * duration
-            #
-            # # avoid campaigns that look too large
-            # if reach > expected_total * 1.5:
-            #     bids[camp] = self.clip_campaign_bid(camp, max(0.1, 0.02 * reach))
-            #     continue
+
+            # avoid campaigns that look too large
+            if reach > expected_total * 1.5:
+                bids[camp] = self.clip_campaign_bid(camp, max(0.1, 0.02 * reach))
+                continue
 
             # how tight the campaign is
             difficulty = min(1.0, reach / max(1.0, expected_total))
