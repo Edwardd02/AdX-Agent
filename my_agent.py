@@ -32,7 +32,7 @@ def expected_daily_users(target_segment: MarketSegment) -> int:
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
     def __init__(self):
         super().__init__()
-        self.name = "HTandRX's Agent New"
+        self.name = "HTandRX's Agent Ultimate Aggressive"
 
     def on_new_game(self):
         pass
@@ -61,10 +61,10 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
                 continue
 
             # spend a steady portion each day
-            daily_budget = max(1.0, remaining_budget * 0.9)
+            daily_budget = max(1.0, remaining_budget * 0.95)
             # urgency goes up when we are behind
             urgency = 1 - (remaining / reach)
-            bid_per_item = 0.2 + 2 * urgency
+            bid_per_item = 0.3 + 2.2 * urgency
             # daily_budget = max(1.0, remaining_budget * 0.35)
             # # urgency goes up when we are behind
             # urgency = 1 - (remaining / reach)
