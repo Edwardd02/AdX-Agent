@@ -66,9 +66,12 @@ def parse_profit_from_log(output_str, agent_name):
 
 def run_optimization():
 
-    budget_rates = frange(0.1, 0.9, 0.2)
-    urgency_bases = frange(0.2, 1.0, 0.2)
-    urgency_slopes = frange(0.2, 2.0, 0.3)
+    # budget_rates = frange(0.1, 0.9, 0.2)
+    # urgency_bases = frange(0.2, 1.0, 0.2)
+    # urgency_slopes = frange(0.2, 2.0, 0.3)
+    budget_rates = frange(0.8, 1, 0.05)
+    urgency_bases = frange(0.1, 0.3, 0.05)
+    urgency_slopes = frange(1.8, 2.5, 0.1)
 
     SIMS_PER_RUN = 50
 

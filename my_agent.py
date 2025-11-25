@@ -47,7 +47,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             # compute remaining reach and budget
             # data structure: {"reach": int, "done": int, "spent": float, "remaining": int, "remaining_budget": float}
             reach = camp.reach # (total target)
-            budget = camp.budget # (total budget)
+            budget = camp.budget or 0 # (total budget)
             done = self.get_cumulative_reach(camp) # (so far achieved)
             spent = self.get_cumulative_cost(camp) # (so far spent)
             # remaining target and budget
@@ -62,7 +62,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
             # spend a steady portion each day
             daily_budget = max(1.0, remaining_budget * 0.9)
-
+            # 0.35, 0.3, 0.7
             # urgency goes up when we are behind
             urgency = 1 - (remaining / reach)
             bid_per_item = 0.2 + 2 * urgency
