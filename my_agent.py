@@ -61,12 +61,14 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
                 continue
 
             # spend a steady portion each day
-            daily_budget = max(1.0, remaining_budget * 0.9)
-            # 0.35, 0.3, 0.7
+            # daily_budget = max(1.0, remaining_budget * 0.9)
+            # # urgency goes up when we are behind
+            # urgency = 1 - (remaining / reach)
+            # bid_per_item = 0.2 + 2 * urgency
+            daily_budget = max(1.0, remaining_budget * 0.35)
             # urgency goes up when we are behind
             urgency = 1 - (remaining / reach)
-            bid_per_item = 0.2 + 2 * urgency
-
+            bid_per_item = 0.3 + 0.7 * urgency
             # only bid on the exact segment
             bid = Bid(
                 bidder=self,
@@ -90,7 +92,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         ##################################################################################################
         bids = {}
 
-        quality = self.get_quality_score()
+        quality = max(self.get_quality_score(),0.05)
 
         for camp in campaigns_for_auction:
             reach = camp.reach
