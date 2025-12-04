@@ -5,20 +5,23 @@ import itertools
 import time
 import os
 import csv
+import math
 from datetime import datetime
 from typing import Set
 from agt_server.local_games.adx_arena import AdXGameSimulator
 from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle
 from agt_server.agents.test_agents.adx.tier1.my_agent import Tier1NDaysNCampaignsAgent
 
+# Import your base agent so we inherit the Campaign Bidding logic
 try:
-    from my_agent import MyNDaysNCampaignsAgent
+    from my_agent_explained import MyNDaysNCampaignsAgent
 except ImportError:
-    print("!!! ERROR: Could not find 'my_agent.py'.")
-    sys.exit(1)
+    # Fallback if file not found, usually for running in isolation
+    from my_agent import MyNDaysNCampaignsAgent
 
 
 def frange(start, stop, step):
+    """Helper to generate float ranges."""
     result = []
     current = start
     while current <= stop + 1e-9:
@@ -27,13 +30,14 @@ def frange(start, stop, step):
     return result
 
 
-class TunableAgent(MyNDaysNCampaignsAgent):
-    def __init__(self, daily_budget_rate, urgency_base, urgency_slope):
+class TunableSigmoidAgent(MyNDaysNCampaignsAgent):
+    def __init__(self, peak_multiplier, steepness, base_lift):
         super().__init__()
-        self.name = "OptimizationBot"
-        self.p_daily_budget_rate = daily_budget_rate
-        self.p_urgency_base = urgency_base
-        self.p_urgency_slope = urgency_slope
+        self.name = "SigmoidOptBot"
+        # Parameters to tune:
+        self.p_peak_multiplier = peak_multiplier  # e.g., 4.0
+        self.p_steepness = steepness  # e.g., 10.0
+        self.p_base_lift = base_lift  # e.g., 0.2
 
     def get_ad_bids(self) -> Set[BidBundle]:
         bundles = set()
@@ -47,9 +51,29 @@ class TunableAgent(MyNDaysNCampaignsAgent):
             if remaining <= 0 or remaining_budget <= 0:
                 continue
 
-            daily_budget = max(1.0, remaining_budget * self.p_daily_budget_rate)
-            urgency = 1 - (remaining / reach)
-            bid_per_item = self.p_urgency_base + (self.p_urgency_slope * urgency)
+            # 1. Base Bid (Avg Price)
+            base_bid = remaining_budget / remaining
+
+            # 2. Progress
+            progress = done / reach
+
+            # 3. Tunable Sigmoid Logic
+            #    We use self.p_steepness to stretch/shrink the curve
+            x = (progress - 0.5) * self.p_steepness
+
+            try:
+                deriv = math.exp(-x) / ((1 + math.exp(-x)) ** 2)
+            except OverflowError:
+                deriv = 0.0
+
+            #    We use self.p_peak_multiplier to scale the height of the bid
+            #    We use self.p_base_lift as the minimum bid floor
+            urgency_multiplier = self.p_base_lift + (deriv * self.p_peak_multiplier)
+
+            bid_per_item = max(base_bid * urgency_multiplier, 0.01)
+
+            # Keep pacing standard for this test (0.95)
+            daily_budget = max(1.0, remaining_budget * 0.95)
 
             bid = Bid(bidder=self, auction_item=camp.target_segment, bid_per_item=bid_per_item, bid_limit=daily_budget)
             bundle = BidBundle(campaign_id=camp.uid, limit=daily_budget, bid_entries={bid})
@@ -58,6 +82,7 @@ class TunableAgent(MyNDaysNCampaignsAgent):
 
 
 def parse_profit_from_log(output_str, agent_name):
+    """Extracts the final profit from the simulator's stdout logs."""
     pattern = re.compile(rf"###\s+{re.escape(agent_name)}\s+#\s+([0-9.-]+)")
     match = pattern.search(output_str)
     if match: return float(match.group(1))
@@ -65,45 +90,51 @@ def parse_profit_from_log(output_str, agent_name):
 
 
 def run_optimization():
+    # 1. Peak Multiplier: How aggressive should we be in the middle?
+    #    The derivative max is 0.25. So 4.0 means ~1.0x multiplier.
+    #    We test range around 3.0 to 6.0.
+    peak_mults = frange(3.0, 6.0, 1.0)
 
-    # budget_rates = frange(0.1, 0.9, 0.2)
-    # urgency_bases = frange(0.2, 1.0, 0.2)
-    # urgency_slopes = frange(0.2, 2.0, 0.3)
-    budget_rates = frange(0.8, 1, 0.05)
-    urgency_bases = frange(0.1, 0.3, 0.05)
-    urgency_slopes = frange(1.8, 2.5, 0.1)
+    # 2. Steepness: How "wide" is the peak window?
+    #    10 is standard. Lower (5) is wider window. Higher (15) is narrower.
+    steepnesses = frange(8.0, 12.0, 2.0)
 
-    SIMS_PER_RUN = 50
+    # 3. Base Lift: Minimum bid multiplier at the edges (start/end)
+    #    0.1 means we bid 10% of avg value. 0.3 means 30%.
+    base_lifts = frange(0.1, 0.3, 0.1)
+
+    SIMS_PER_RUN = 15
 
     log_folder = "experiment_logs"
     if not os.path.exists(log_folder):
         os.makedirs(log_folder)
-        print(f"Created folder: {log_folder}")
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    csv_filename = os.path.join(log_folder, f"results_{timestamp}.csv")
+    csv_filename = os.path.join(log_folder, f"sigmoid_results_{timestamp}.csv")
 
     print(f"Logging data to: {csv_filename}")
     print("-" * 50)
 
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Run_ID", "Budget_Rate", "Base_Bid", "Slope", "Avg_Profit", "Num_Sims"])
+        writer.writerow(["Run_ID", "Peak_Mult", "Steepness", "Base_Lift", "Avg_Profit", "Num_Sims"])
 
-    combinations = list(itertools.product(budget_rates, urgency_bases, urgency_slopes))
+    combinations = list(itertools.product(peak_mults, steepnesses, base_lifts))
     total_combs = len(combinations)
     best_score = -float('inf')
+    best_params = None
 
     start_time = time.time()
 
-    for i, (rate, base, slope) in enumerate(combinations):
+    for i, (pm, steep, base) in enumerate(combinations):
         elapsed = time.time() - start_time
         avg_time = elapsed / (i if i > 0 else 1)
         remaining = (total_combs - i) * avg_time / 60
 
-        print(f"[{i + 1}/{total_combs}] R={rate}, B={base}, S={slope} | Rem: {remaining:.1f}m ... ", end="", flush=True)
+        print(f"[{i + 1}/{total_combs}] P={pm}, S={steep}, B={base} | Rem: {remaining:.1f}m ... ", end="", flush=True)
 
-        my_agent = TunableAgent(rate, base, slope)
+        my_agent = TunableSigmoidAgent(pm, steep, base)
+        # 9 Opponents (Standard Tier 1)
         opponents = [Tier1NDaysNCampaignsAgent(name=f"Opponent {j + 1}") for j in range(9)]
         agents = [my_agent] + opponents
         simulator = AdXGameSimulator()
@@ -117,9 +148,6 @@ def run_optimization():
         except Exception:
             sys.stdout = original_stdout
             print("CRASH")
-            with open(csv_filename, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([i + 1, rate, base, slope, "CRASH", SIMS_PER_RUN])
             continue
 
         sys.stdout = original_stdout
@@ -130,14 +158,16 @@ def run_optimization():
 
         with open(csv_filename, mode='a', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow([i + 1, rate, base, slope, avg_profit, SIMS_PER_RUN])
+            writer.writerow([i + 1, pm, steep, base, avg_profit, SIMS_PER_RUN])
 
         if avg_profit > best_score:
             best_score = avg_profit
+            best_params = (pm, steep, base)
 
     print("\n" + "=" * 50)
     print(f"DONE. Results saved to {csv_filename}")
     print(f"Best Profit: ${best_score:.2f}")
+    print(f"Best Params: Peak={best_params[0]}, Steep={best_params[1]}, Base={best_params[2]}")
     print("=" * 50)
 
 

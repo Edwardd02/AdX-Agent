@@ -4,7 +4,7 @@ from typing import Set, Dict
 from math import ceil
 from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
 from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
-
+import math
 
 # Market Share Dictionary
 ATOMIC_SEGMENT_COUNTS = {
@@ -59,12 +59,28 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             # skip finished or broke campaigns
             if remaining <= 0 or remaining_budget <= 0:
                 continue
+            # Old Logic (Linear):
+            # We used to calculate 'urgency' based on how far behind we were.
+            # Formula: urgency = 1 - (remaining / reach).
+            # Result: As we approached the goal, urgency went UP. We bid MAX at the end.
+            # Flaw: The AdX scoring curve is Sigmoidal (S-Curve). The last few users
+            #       add very little score (diminishing returns). Bidding high at the end
+            #       is "throwing good money after bad."
 
+            # New Logic (Sigmoid Derivative):
+            # We bid based on the *slope* of the S-Curve.
+            # 1. Start (0-20%): Flat slope. Low Value. -> Bid Low.
+            # 2. Middle (20-80%): Steep slope. High Value. -> Bid Aggressively.
+            # 3. End (80-100%): Flat slope. Low Value. -> Bid Low (save budget).
+            base_bid = remaining_budget / remaining
+            progress = done/reach
             # spend a steady portion each day
             daily_budget = max(1.0, remaining_budget * 0.95)
             # urgency goes up when we are behind
-            urgency = 1 - (remaining / reach)
-            bid_per_item = 0.3 + 2.2 * urgency
+
+            x = (progress - 0.5) * 10
+            urgency = 0.2 + (math.exp(-x) / ((1 + math.exp(-x)) ** 2)) * 4.0
+            bid_per_item = max(base_bid * urgency, 0.01)
             # daily_budget = max(1.0, remaining_budget * 0.35)
             # # urgency goes up when we are behind
             # urgency = 1 - (remaining / reach)
