@@ -78,8 +78,8 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             daily_budget = max(1.0, remaining_budget * 0.95)
             # urgency goes up when we are behind
 
-            x = (progress - 0.5) * 10
-            urgency = 0.2 + (math.exp(-x) / ((1 + math.exp(-x)) ** 2)) * 4.0
+            x = (progress - 0.5) * 8.0
+            urgency = 0.3 + (math.exp(-x) / ((1 + math.exp(-x)) ** 2)) * 3.0
             bid_per_item = max(base_bid * urgency, 0.01)
             # daily_budget = max(1.0, remaining_budget * 0.35)
             # # urgency goes up when we are behind

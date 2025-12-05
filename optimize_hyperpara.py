@@ -103,14 +103,14 @@ def run_optimization():
     #    0.1 means we bid 10% of avg value. 0.3 means 30%.
     base_lifts = frange(0.1, 0.3, 0.1)
 
-    SIMS_PER_RUN = 15
+    SIMS_PER_RUN = 100
 
     log_folder = "experiment_logs"
     if not os.path.exists(log_folder):
         os.makedirs(log_folder)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    csv_filename = os.path.join(log_folder, f"sigmoid_results_{timestamp}.csv")
+    csv_filename = os.path.join(log_folder, f"results_{timestamp}.csv")
 
     print(f"Logging data to: {csv_filename}")
     print("-" * 50)
